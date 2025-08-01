@@ -1,8 +1,12 @@
 #include <iostream>
 #include <format>
+#include <stacktrace>
 #include <chrono>
 #include <cstdarg>
+#include <csignal>
 #include "log.h"
+using std::cout;
+using std::endl;
 
 #ifdef _WIN32
 	#define localtime_r(a, b) localtime_s(b, a)
@@ -65,6 +69,11 @@ AsyncLogger &AsyncLogger::getInstance()
     return instance;
 }
 
+void AsyncLogger::setLevel(LogLevel level)
+{
+    _currentLevel = level;
+}
+
 LogLevel AsyncLogger::getLevel()
 {
     return _currentLevel;
@@ -72,28 +81,78 @@ LogLevel AsyncLogger::getLevel()
 
 AsyncLogger::AsyncLogger()
 {
-    init();
+    _currentBuffer = std::make_unique<buffer>();
+    _currentBuffer->reserve(1024);
 }
 
 AsyncLogger::~AsyncLogger()
 {
-        
+    stop();
 }
 
 void AsyncLogger::init()
 {
     _currentLevel = LogLevel::DEBUG;
+
+    _running = true;
+    _thread = std::thread(&AsyncLogger::writerThread, this);
+
+    installSignalHandler();
+}
+
+void AsyncLogger::stop()
+{
+    if (!_running) return;
+    _running = false;
+    _cond.notify_all();
+    if (_thread.joinable()) _thread.join();
+}
+
+void AsyncLogger::writerThread()
+{
+    auto bufferToWrite = std::make_unique<buffer>();
+    bufferToWrite->reserve(1024);
+    
+    while (_running)
+    {
+        {
+            std::unique_lock<std::mutex> lock(_mutex);
+            cout << 1 << endl;
+            _cond.wait(lock, [this] { return !_running || _currentBuffer->size(); });
+            cout << _currentBuffer->size() << ' ' << _running << endl;
+            std::swap(bufferToWrite, _currentBuffer);
+        }
+
+        if (bufferToWrite->size() == 0) continue;
+        
+        for (const auto &message : *bufferToWrite)
+        {
+            std::cout << message;
+        }
+        bufferToWrite->clear();
+    }
+
+    for (const auto &message : *_currentBuffer)
+    {
+        std::cout << message;
+    }
 }
 
 void AsyncLogger::pushLog(LogLevel level, const char* file, int line, const std::string &message)
 {
-    std::string formatStr = logMessage(level, formatPreamble(level, file, line, std::this_thread::get_id()), message);
+    std::string formatStr = logMessage(level, file, line, std::this_thread::get_id(), message);
 
-    std::cout << formatStr;
+    {
+        std::unique_lock<std::mutex> lock(_mutex);
+        _currentBuffer->push_back(std::move(formatStr));
+    }
+    _cond.notify_one();
 }
 
-std::string AsyncLogger::logMessage(LogLevel level, const std::string &preamble, const std::string &message)
+std::string AsyncLogger::logMessage(LogLevel level, const char *file, int line, 
+                                    const std::thread::id &tid, const std::string &message)
 {
+    std::string preamble = formatPreamble(level, file, line, std::this_thread::get_id());
     std::string res;
     size_t start = 0;
     size_t end = message.find('\n');
@@ -164,4 +223,29 @@ std::string AsyncLogger::formatPreamble(LogLevel level, const char *file, int li
     res += std::format("{:>5}| ", levelStr);
         
     return res;
+}
+
+void AsyncLogger::dealStackTrace(int sig)
+{
+    auto stackTrace = std::stacktrace::current();
+    for (const auto &info : stackTrace)
+    {
+        std::string file = info.source_file();
+        size_t pos = file.find_last_of('\\');
+        if (pos == std::string::npos) pos = file.find_last_of('/');
+        if (pos == std::string::npos) continue;
+        LOG_ERROR << std::format("↪ {} [{}:{}]", info.description(), file.substr(pos + 1), info.source_line());
+    }
+}
+
+void AsyncLogger::signalHandlerWrapper(int sig)
+{
+    AsyncLogger::getInstance().dealStackTrace(sig);
+    exit(sig);
+}
+
+void AsyncLogger::installSignalHandler()
+{
+    std::vector<int> signals = { SIGINT, SIGSEGV, SIGABRT };
+    for (const auto &sign : signals) std::signal(sign, &signalHandlerWrapper);
 }

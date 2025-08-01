@@ -4,7 +4,10 @@
 #include <sstream>
 #include <string>
 #include <atomic>
+#include <vector>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
 
 #define LOG_THREADID_WIDTH 7
 #define LOG_FILENAME_WIDTH 20
@@ -60,19 +63,35 @@ class AsyncLogger
 
 public:
     static AsyncLogger &getInstance();
+    void init();
+    void setLevel(LogLevel level);
     LogLevel getLevel();
+    void stop();
 
 private:
     AsyncLogger();
     ~AsyncLogger();
-    void init();
     void pushLog(LogLevel level, const char* file, int line, const std::string &message);
-    std::string logMessage(LogLevel level, const std::string &preamble, const std::string &message);
+    std::string logMessage(LogLevel level, const char *file, int line, 
+                           const std::thread::id &tid, const std::string &message);
     std::string formatMessage(LogLevel level, const std::string &preamble, const std::string &message);
     std::string formatPreamble(LogLevel level, const char *file, int line, const std::thread::id &tid);
+    void writerThread();
+    void installSignalHandler();
+    void dealStackTrace(int signal);
+    static void signalHandlerWrapper(int signal);
 
 private:
+    using buffer = std::vector<std::string>;
+    using bufferPtr = std::unique_ptr<buffer>;
+
+    std::atomic<bool> _running;
     std::atomic<LogLevel> _currentLevel;
+
+    std::thread _thread;
+    std::mutex _mutex;
+    std::condition_variable _cond;
+    bufferPtr _currentBuffer;
 
     AsyncLogger(const AsyncLogger &);
     void operator=(const AsyncLogger &);
