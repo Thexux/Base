@@ -68,6 +68,8 @@ public:
     LogLevel getLevel();
     void stop();
 
+    static void installSignalHandler();
+
 private:
     AsyncLogger();
     ~AsyncLogger();
@@ -77,9 +79,7 @@ private:
     std::string formatMessage(LogLevel level, const std::string &preamble, const std::string &message);
     std::string formatPreamble(LogLevel level, const char *file, int line, const std::thread::id &tid);
     void writerThread();
-    void installSignalHandler();
-    void dealStackTrace(int signal);
-    static void signalHandlerWrapper(int signal);
+    static void dealStackTrace(int signal);
 
 private:
     using buffer = std::vector<std::string>;

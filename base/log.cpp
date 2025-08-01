@@ -117,9 +117,9 @@ void AsyncLogger::writerThread()
     {
         {
             std::unique_lock<std::mutex> lock(_mutex);
-            cout << 1 << endl;
+            // cout << 1 << endl;
             _cond.wait(lock, [this] { return !_running || _currentBuffer->size(); });
-            cout << _currentBuffer->size() << ' ' << _running << endl;
+            // cout << _currentBuffer->size() << ' ' << _running << endl;
             std::swap(bufferToWrite, _currentBuffer);
         }
 
@@ -236,16 +236,11 @@ void AsyncLogger::dealStackTrace(int sig)
         if (pos == std::string::npos) continue;
         LOG_ERROR << std::format("↪ {} [{}:{}]", info.description(), file.substr(pos + 1), info.source_line());
     }
-}
-
-void AsyncLogger::signalHandlerWrapper(int sig)
-{
-    AsyncLogger::getInstance().dealStackTrace(sig);
     exit(sig);
 }
 
 void AsyncLogger::installSignalHandler()
 {
     std::vector<int> signals = { SIGINT, SIGSEGV, SIGABRT };
-    for (const auto &sign : signals) std::signal(sign, &signalHandlerWrapper);
+    for (const auto &sign : signals) std::signal(sign, &dealStackTrace);
 }
