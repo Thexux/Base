@@ -2,6 +2,7 @@
 #define LOG_H
 
 #include <sstream>
+#include <fstream>
 #include <string>
 #include <atomic>
 #include <vector>
@@ -63,7 +64,8 @@ class AsyncLogger
 
 public:
     static AsyncLogger &getInstance();
-    void init();
+    void init(std::string path, std::string name, LogLevel level, 
+              int maxBytes, int maxNumber, bool console);
     void setLevel(LogLevel level);
     LogLevel getLevel();
     void stop();
@@ -78,6 +80,8 @@ private:
                            const std::thread::id &tid, const std::string &message);
     std::string formatMessage(LogLevel level, const std::string &preamble, const std::string &message);
     std::string formatPreamble(LogLevel level, const char *file, int line, const std::thread::id &tid);
+    void openNewLogFile();
+    void clearOldFiles();
     void writerThread();
     static void dealStackTrace(int signal);
 
@@ -87,6 +91,15 @@ private:
 
     std::atomic<bool> _running;
     std::atomic<LogLevel> _currentLevel;
+
+    std::ofstream _logFile;
+    std::string _logFilePath;
+    std::string _baseFileName;
+    int _fileIndex = 0;
+    int _currentFileSize = 0;
+    int _maxFileBytes = 0;
+    int _currentDay = 0;
+    bool _consoleOutput = true;
 
     std::thread _thread;
     std::mutex _mutex;

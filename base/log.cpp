@@ -4,15 +4,14 @@
 #include <chrono>
 #include <cstdarg>
 #include <csignal>
+#include <filesystem>
 #include "log.h"
-using std::cout;
-using std::endl;
 
 #ifdef _WIN32
 	#define localtime_r(a, b) localtime_s(b, a)
 #endif
 
-bool g_terminalHasColor = true;
+bool g_terminalHasColor = false;
 
 #ifdef _WIN32
 #define VTSEQ(ID) ("\x1b[1;" #ID "m")
@@ -90,9 +89,14 @@ AsyncLogger::~AsyncLogger()
     stop();
 }
 
-void AsyncLogger::init()
+void AsyncLogger::init(std::string path, std::string name, LogLevel level, 
+                       int maxBytes, int maxNumber, bool isConsole)
 {
-    _currentLevel = LogLevel::DEBUG;
+    _logFilePath = path;
+    _baseFileName = name;
+    _currentLevel = level;
+    _maxFileBytes = maxBytes;
+    _consoleOutput = isConsole;
 
     _running = true;
     _thread = std::thread(&AsyncLogger::writerThread, this);
@@ -110,6 +114,7 @@ void AsyncLogger::stop()
 
 void AsyncLogger::writerThread()
 {
+    openNewLogFile();
     auto bufferToWrite = std::make_unique<buffer>();
     bufferToWrite->reserve(1024);
     
@@ -117,24 +122,66 @@ void AsyncLogger::writerThread()
     {
         {
             std::unique_lock<std::mutex> lock(_mutex);
-            // cout << 1 << endl;
             _cond.wait(lock, [this] { return !_running || _currentBuffer->size(); });
-            // cout << _currentBuffer->size() << ' ' << _running << endl;
             std::swap(bufferToWrite, _currentBuffer);
         }
 
         if (bufferToWrite->size() == 0) continue;
+
+        using namespace std::chrono;
+        auto now = duration_cast<seconds>(system_clock::now().time_since_epoch()).count();
+        tm timeInfo;
+        localtime_r(&now, &timeInfo);
+        if (timeInfo.tm_yday != _currentDay) openNewLogFile();
         
         for (const auto &message : *bufferToWrite)
         {
-            std::cout << message;
+            if (_logFile.is_open()) _logFile << message, _currentFileSize += message.size();
+            if(_consoleOutput) std::cout << message;
         }
+        if (_logFile.is_open()) _logFile.flush();
+
+        if (_currentFileSize > _maxFileBytes) _fileIndex++, openNewLogFile();
+
         bufferToWrite->clear();
     }
 
     for (const auto &message : *_currentBuffer)
     {
-        std::cout << message;
+        if (_logFile.is_open()) _logFile << message;
+        if (_consoleOutput) std::cout << message;
+    }
+    if (_logFile.is_open()) _logFile.flush();
+}
+
+void AsyncLogger::openNewLogFile()
+{
+    if (_logFile.is_open()) _logFile.close();
+
+    using namespace std::chrono;
+    auto now = duration_cast<seconds>(system_clock::now().time_since_epoch()).count();
+    tm timeInfo;
+    localtime_r(&now, &timeInfo);
+    _currentDay = timeInfo.tm_yday;
+    _currentFileSize = 0;
+
+    std::ostringstream fileName;
+    fileName << _logFilePath << '/' 
+             << _baseFileName << '-' 
+             << std::put_time(&timeInfo, "%Y-%m-%d") 
+             << '(' << _fileIndex << ").log";
+
+    std::string name = fileName.str();
+
+    bool fileExists = std::filesystem::exists(name);
+    if (fileExists) _currentFileSize = std::filesystem::file_size(name);
+
+    _logFile.open(name, std::ios::out | std::ios::app);
+    if (!_logFile.is_open()) std::cerr << "Error: Failed to open log file: " << name << std::endl;
+    else if (!fileExists || _currentFileSize == 0)
+    {
+        _logFile << "\xEF\xBB\xBF"; // UTF-8 BOM: EF BB BF
+        _currentFileSize = 3;
     }
 }
 
@@ -241,6 +288,6 @@ void AsyncLogger::dealStackTrace(int sig)
 
 void AsyncLogger::installSignalHandler()
 {
-    std::vector<int> signals = { SIGINT, SIGSEGV, SIGABRT };
+    std::vector<int> signals = { SIGSEGV, SIGABRT };
     for (const auto &sign : signals) std::signal(sign, &dealStackTrace);
 }
