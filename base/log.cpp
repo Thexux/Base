@@ -196,7 +196,42 @@ void AsyncLogger::openNewLogFile()
 
 void AsyncLogger::clearOldFiles()
 {
+    std::vector<std::filesystem::path> files;
+    try
+    {
+        for (const auto &entry : std::filesystem::directory_iterator(_logFilePath))
+        {
+            if (!entry.is_regular_file()) continue;
+            std::string name = entry.path().filename().string();
+            if (name.find(_baseFileName) != std::string::npos) files.push_back(entry.path());
+        }
+    }
+    catch (const std::filesystem::filesystem_error &e)
+    {
+        std::cerr << "Error: Failed to clear old log files: " << e.what() << std::endl;
+        return;
+    }
 
+    if (files.size() <= _maxFileNumber) return;
+
+    std::sort(files.begin(), files.end(),
+        [&](const std::filesystem::path &a, const std::filesystem::path &b)
+        {
+            return std::filesystem::last_write_time(a) < std::filesystem::last_write_time(b);
+        });
+    
+    for (int i = 0; i < files.size() - _maxFileNumber; i++)
+    {
+        try
+        {
+            std::filesystem::remove(files[i]);
+        }
+        catch (const std::filesystem::filesystem_error &e)
+        {
+            std::cerr << "Failed to delete old log file: " << files[i].string() << " - " << e.what() << std::endl;
+            return;
+        }
+    }
 }
 
 void AsyncLogger::pushLog(LogLevel level, const char* file, int line, const std::string &message)
