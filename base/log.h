@@ -20,13 +20,6 @@ enum class LogLevel {
     ERROR
 };
 
-enum Level {
-    debugLevel = 0,
-    infoLevel  = 1,
-    warnLevel  = 2,
-    errorLevel = 3
-};
-
 class AsyncLogger;
 
 class LogStream : public std::ostringstream
@@ -72,6 +65,8 @@ public:
 
     static void installSignalHandler();
 
+    static bool terminalHasColor;
+
 private:
     AsyncLogger();
     ~AsyncLogger();
@@ -98,6 +93,7 @@ private:
     int _fileIndex = 0;
     int _currentFileSize = 0;
     int _maxFileBytes = 0;
+    int _maxFileNumber = 0;
     int _currentDay = 0;
     bool _consoleOutput = true;
 

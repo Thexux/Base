@@ -1,9 +1,7 @@
 #include <iostream>
 #include <format>
-#include <stacktrace>
 #include <chrono>
 #include <cstdarg>
-#include <csignal>
 #include <filesystem>
 #include "log.h"
 
@@ -11,7 +9,7 @@
 	#define localtime_r(a, b) localtime_s(b, a)
 #endif
 
-bool g_terminalHasColor = false;
+bool AsyncLogger::terminalHasColor;
 
 #ifdef _WIN32
 #define VTSEQ(ID) ("\x1b[1;" #ID "m")
@@ -19,22 +17,22 @@ bool g_terminalHasColor = false;
 #define VTSEQ(ID) ("\x1b[" #ID "m")
 #endif
 
-const char* terminalBlack()      { return g_terminalHasColor ? VTSEQ(30) : ""; }
-const char* terminalRed()        { return g_terminalHasColor ? VTSEQ(31) : ""; }
-const char* terminalGreen()      { return g_terminalHasColor ? VTSEQ(32) : ""; }
-const char* terminalYellow()     { return g_terminalHasColor ? VTSEQ(33) : ""; }
-const char* terminalBlue()       { return g_terminalHasColor ? VTSEQ(34) : ""; }
-const char* terminalPurple()     { return g_terminalHasColor ? VTSEQ(35) : ""; }
-const char* terminalCyan()       { return g_terminalHasColor ? VTSEQ(36) : ""; }
-const char* terminalLightGray()  { return g_terminalHasColor ? VTSEQ(37) : ""; }
-const char* terminalWhite()      { return g_terminalHasColor ? VTSEQ(37) : ""; }
-const char* terminalLightRed()   { return g_terminalHasColor ? VTSEQ(91) : ""; }
-const char* terminalDim()        { return g_terminalHasColor ? VTSEQ(2)  : ""; }
+const char* terminalBlack()      { return AsyncLogger::terminalHasColor ? VTSEQ(30) : ""; }
+const char* terminalRed()        { return AsyncLogger::terminalHasColor ? VTSEQ(31) : ""; }
+const char* terminalGreen()      { return AsyncLogger::terminalHasColor ? VTSEQ(32) : ""; }
+const char* terminalYellow()     { return AsyncLogger::terminalHasColor ? VTSEQ(33) : ""; }
+const char* terminalBlue()       { return AsyncLogger::terminalHasColor ? VTSEQ(34) : ""; }
+const char* terminalPurple()     { return AsyncLogger::terminalHasColor ? VTSEQ(35) : ""; }
+const char* terminalCyan()       { return AsyncLogger::terminalHasColor ? VTSEQ(36) : ""; }
+const char* terminalLightGray()  { return AsyncLogger::terminalHasColor ? VTSEQ(37) : ""; }
+const char* terminalWhite()      { return AsyncLogger::terminalHasColor ? VTSEQ(37) : ""; }
+const char* terminalLightRed()   { return AsyncLogger::terminalHasColor ? VTSEQ(91) : ""; }
+const char* terminalDim()        { return AsyncLogger::terminalHasColor ? VTSEQ(2)  : ""; }
 
-const char* terminalBold()       { return g_terminalHasColor ? VTSEQ(1) : ""; }
-const char* terminalUnderline()  { return g_terminalHasColor ? VTSEQ(4) : ""; }
+const char* terminalBold()       { return AsyncLogger::terminalHasColor ? VTSEQ(1) : ""; }
+const char* terminalUnderline()  { return AsyncLogger::terminalHasColor ? VTSEQ(4) : ""; }
 
-const char* terminalReset()      { return g_terminalHasColor ? VTSEQ(0) : ""; }
+const char* terminalReset()      { return AsyncLogger::terminalHasColor ? VTSEQ(0) : ""; }
 
 
 LogStream::LogStream(AsyncLogger &logger, LogLevel level, const char *file, int line, const char *fmt, ...)
@@ -96,7 +94,11 @@ void AsyncLogger::init(std::string path, std::string name, LogLevel level,
     _baseFileName = name;
     _currentLevel = level;
     _maxFileBytes = maxBytes;
+    _maxFileNumber = maxNumber;
     _consoleOutput = isConsole;
+    terminalHasColor = isConsole;
+
+    if (!std::filesystem::exists(path)) std::filesystem::create_directories(path);
 
     _running = true;
     _thread = std::thread(&AsyncLogger::writerThread, this);
@@ -132,7 +134,13 @@ void AsyncLogger::writerThread()
         auto now = duration_cast<seconds>(system_clock::now().time_since_epoch()).count();
         tm timeInfo;
         localtime_r(&now, &timeInfo);
-        if (timeInfo.tm_yday != _currentDay) openNewLogFile();
+        if (timeInfo.tm_yday != _currentDay) 
+        {
+            _fileIndex = 0;
+            openNewLogFile();
+        }
+        
+        if (_currentFileSize > _maxFileBytes) _fileIndex++, openNewLogFile();
         
         for (const auto &message : *bufferToWrite)
         {
@@ -140,8 +148,6 @@ void AsyncLogger::writerThread()
             if(_consoleOutput) std::cout << message;
         }
         if (_logFile.is_open()) _logFile.flush();
-
-        if (_currentFileSize > _maxFileBytes) _fileIndex++, openNewLogFile();
 
         bufferToWrite->clear();
     }
@@ -156,6 +162,7 @@ void AsyncLogger::writerThread()
 
 void AsyncLogger::openNewLogFile()
 {
+    if (terminalHasColor) return;
     if (_logFile.is_open()) _logFile.close();
 
     using namespace std::chrono;
@@ -183,6 +190,13 @@ void AsyncLogger::openNewLogFile()
         _logFile << "\xEF\xBB\xBF"; // UTF-8 BOM: EF BB BF
         _currentFileSize = 3;
     }
+
+    clearOldFiles();
+}
+
+void AsyncLogger::clearOldFiles()
+{
+
 }
 
 void AsyncLogger::pushLog(LogLevel level, const char* file, int line, const std::string &message)
@@ -216,7 +230,7 @@ std::string AsyncLogger::logMessage(LogLevel level, const char *file, int line,
 std::string AsyncLogger::formatMessage(LogLevel level, const std::string &preamble, const std::string &message)
 {
     std::string res;
-    if ((int)level < warnLevel)
+    if (level < LogLevel::WARN)
     {
         res += terminalReset();
         res += terminalDim();
@@ -255,7 +269,8 @@ std::string AsyncLogger::formatPreamble(LogLevel level, const char *file, int li
                         timeInfo.tm_sec, 
                         msSinceEpoch % 1000);
         
-    res += std::format("[{:^{}}] ", tid, LOG_THREADID_WIDTH);
+    std::stringstream ss; ss << tid;
+    res += std::format("[{:^{}}] ", ss.str(), LOG_THREADID_WIDTH);
         
     const char* lastSlash = strrchr(file, '/');
     if (!lastSlash) lastSlash = strrchr(file, '\\');
@@ -272,6 +287,10 @@ std::string AsyncLogger::formatPreamble(LogLevel level, const char *file, int li
     return res;
 }
 
+#if defined(__cpp_lib_stacktrace)
+#include <csignal>
+#include <stacktrace>
+
 void AsyncLogger::dealStackTrace(int sig)
 {
     auto stackTrace = std::stacktrace::current();
@@ -285,9 +304,12 @@ void AsyncLogger::dealStackTrace(int sig)
     }
     exit(sig);
 }
+#endif
 
 void AsyncLogger::installSignalHandler()
 {
+#if defined(__cpp_lib_stacktrace)
     std::vector<int> signals = { SIGSEGV, SIGABRT };
     for (const auto &sign : signals) std::signal(sign, &dealStackTrace);
+#endif
 }
