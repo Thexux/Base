@@ -87,8 +87,8 @@ AsyncLogger::~AsyncLogger()
     stop();
 }
 
-void AsyncLogger::init(std::string path, std::string name, LogLevel level, 
-                       int maxBytes, int maxNumber, bool isConsole)
+void AsyncLogger::start(std::string path, std::string name, LogLevel level, 
+                        int maxBytes, int maxNumber, bool isConsole)
 {
     _logFilePath = path;
     _baseFileName = name;

@@ -3,7 +3,6 @@
 
 #include <sstream>
 #include <fstream>
-#include <string>
 #include <atomic>
 #include <vector>
 #include <thread>
@@ -57,8 +56,8 @@ class AsyncLogger
 
 public:
     static AsyncLogger &getInstance();
-    void init(std::string path, std::string name, LogLevel level, 
-              int maxBytes, int maxNumber, bool console);
+    void start(std::string path = "logs", std::string name = "app", LogLevel level = LogLevel::DEBUG, 
+               int maxBytes = 10 * 1024 * 1024, int maxNumber = 5, bool console = true);
     void setLevel(LogLevel level);
     LogLevel getLevel();
     void stop();
